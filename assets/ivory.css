@@ -65,7 +65,8 @@ section.invert {
   --rule:  var(--gray-700);
 }
 
-/* Title slide: left-aligned, vertically centred, larger heading */
+/* Title slide: centred both ways, larger heading */
+section.lead { align-items: center; text-align: center; }
 section.lead h1 { font-size: 76px; }
 section.lead h1 + p,
 section.lead h2 + p { max-width: 720px; }
