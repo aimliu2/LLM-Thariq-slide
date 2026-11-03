@@ -31,7 +31,9 @@ for (const f of readdirSync(themeDir).filter((f) => f.endsWith('.css'))) {
 }
 
 const md = readFileSync(input, 'utf8')
-const { html, css } = marp.render(md)
+const rendered = marp.render(md)
+const { css } = rendered
+const { html, shared } = dedupSrcdocCss(rendered.html)
 const title = md.match(/^#\s+(.+)$/m)?.[1].replace(/[*_`]/g, '').trim() ?? basename(input, extname(input))
 
 const page = `<!doctype html>
@@ -64,7 +66,7 @@ ${css}
 </style>
 </head>
 <body>
-${html}
+${shared}${html}
 <script>
   (function () {
     const slides = Array.from(document.querySelectorAll('div.marpit > svg[data-marpit-svg]'));
@@ -100,6 +102,51 @@ ${html}
 </body>
 </html>
 `
+
+// Iframe pages inlined into srcdoc (e.g. charts) often each carry the same <style>
+// (theme, chart CSS). Emit every body repeated across iframes once in the parent as an
+// inert text/plain script, and have each srcdoc document.write it back in place —
+// synchronous during parse, so cascade order is unchanged. Works because srcdoc
+// iframes without `sandbox` are same-origin with the parent. The .md decks stay
+// self-contained; only this HTML output is deduplicated.
+function dedupSrcdocCss(html) {
+  const decode = (s) => s
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(+d))
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+  // Same escaping the decks' srcdoc uses (one line, attribute-safe).
+  const encode = (s) => s
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\r?\n/g, '&#10;')
+  const SRCDOC = / srcdoc="([^"]*)"/g
+  const STYLE = /<style>([\s\S]*?)<\/style>/g
+
+  const counts = new Map()
+  for (const [, attr] of html.matchAll(SRCDOC)) {
+    for (const [, body] of decode(attr).matchAll(STYLE)) counts.set(body, (counts.get(body) ?? 0) + 1)
+  }
+  const ids = new Map()
+  for (const [body, n] of counts) {
+    // Skip anything that could end or confuse the host <script> element.
+    if (n >= 2 && !/<\/script|<!--/i.test(body)) ids.set(body, `srcdoc-css-${ids.size + 1}`)
+  }
+  if (!ids.size) return { html, shared: '' }
+
+  const rewritten = html.replace(SRCDOC, (tag, attr) => {
+    const doc = decode(attr)
+    let hit = false
+    const next = doc.replace(STYLE, (block, body) => {
+      const id = ids.get(body)
+      if (!id) return block
+      hit = true
+      return `<script>document.write('<style>'+parent.document.getElementById('${id}').textContent+'<\\/style>')</script>`
+    })
+    return hit ? ` srcdoc="${encode(next)}"` : tag
+  })
+  const shared = [...ids].map(([body, id]) => `<script type="text/plain" id="${id}">${body}</script>\n`).join('')
+  return { html: rewritten, shared }
+}
 
 const dest = out ?? join(dirname(input), basename(input, extname(input)) + '.html')
 writeFileSync(dest, page)

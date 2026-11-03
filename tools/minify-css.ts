@@ -1,6 +1,6 @@
 // Minify a Marp theme without dependencies: keeps `/* @theme … */`-style directive
 // comments (Marp reads them), drops other comments, collapses whitespace.
-// Usage: bun minify-css.ts theme/ivory.css > dist/ivory.min.css
+// Usage: bun tools/minify-css.ts assets/ivory.css > theme/ivory.min.css
 const src = await Bun.file(process.argv[2]).text()
 
 const out = src
